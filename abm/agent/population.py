@@ -11,13 +11,23 @@ logger = logging.getLogger(__name__)
 
 
 class Population(object):
+    """
+    :type env: simpy.Environment
+    :type stats: abm.stats.StatTracker
+    :type id: int
+    :type islands: dict[int, abm.resources.Island]
+    :type start_island: int
+    :type finish_island: int
+    :type current_island: abm.resources.Island
+    """
+
     def __init__(self, env, pop_id, stats, islands, start_island, finish_island, ignore_islands,
                  consumption_rate=1.0, move_propensity=1.0, die_after=100, tick_size=1):
         """
-        :type env: Environment
-        :type stats: StatTracker
+        :type env: simpy.Environment
+        :type stats: abm.stats.StatTracker
         :type pop_id: int
-        :type islands: dict[int, Island]
+        :type islands: dict[int, abm.resources.Island]
         :type start_island: int
         """
         self.id = pop_id
@@ -44,10 +54,10 @@ class Population(object):
         self.times_starved = 0
 
         self._run = self.env.process(self.run())
-        # self._consume = self.env.process(self.consume())
+        self._consume = self.env.process(self.consume())
 
     @staticmethod
-    def weighted_choice(islands, probs, visited):
+    def weighted_choice(islands, visited, probs=None):
         """
         :type islands: numpy.ndarray
         :type probs: numpy.ndarray
@@ -56,7 +66,7 @@ class Population(object):
         """
         mask = in1d(islands, list(visited), invert=True)
         m = islands[mask]
-        p = probs[mask] / probs[mask].sum()
+        p = probs[mask] / probs[mask].sum() if probs is not None else None
         if len(m) > 0:
             c = choice(m, size=1, p=p)
             if len(c) > 0:
@@ -64,39 +74,79 @@ class Population(object):
 
     @property
     def finished(self):
+        """
+        :rtype: bool
+        """
         return self.dead or self.current_island.id == self.finish_island
 
     @property
     def will_move(self):
+        """
+        :rtype: bool
+        """
         return self.current_island.id == self.start_island or \
                self.current_island.resource_usage < random.expovariate(10.0 / self.move_propensity)
 
-    def _move_to(self, new_island):
-        release_old = self.current_island.r.release(self.current_request)
-        current_request = new_island.r.request()
-        yield release_old & current_request
-        self.stats.traverse(self.current_island, new_island)
+    def _update_island_callback(self, new_island):
+        def callback(event):
+            """
+
+            :param event:
+            :type event: simpy.events.Event
+            :return:
+            :rtype:
+            """
+            if event.ok:
+                self._update_island(new_island)
+
+        return callback
+
+    def _update_island(self, new_island):
+        """
+        :type new_island: abm.resources.Island
+        """
+        self.stats.traverse(self.current_island.id, new_island.id)
         self.current_island = new_island
 
+    def _move_to(self, new_island):
+        """
+        :type new_island: abm.resources.Island
+        :rtype: simpy.events.Event
+        """
+        release_old = self.current_island.r.release(self.current_request)
+        current_request = new_island.r.request()
+        return release_old & current_request
+
     def go_back(self):
+        """
+        :rtype: simpy.events.Event
+        """
         if len(self.backtrack) == 0:
             logger.debug("POPULATION %s IS A FAILURE!!!!", self.id)
-            yield self.die()
+            return self.die()
         else:
             backtrack_island = self.islands[self.backtrack.pop(-1)]
             logger.debug('%05d Population %s is stuck on %s. Moving back to previous island %s', self.env.now, self.id,
                          self.current_island, backtrack_island)
-            yield self._move_to(backtrack_island)
+            e = self._move_to(backtrack_island)
+            e.callbacks.append(self._update_island_callback(backtrack_island))
+            return e
 
     def die(self):
+        """
+        :rtype: simpy.events.Event
+        """
         self.dead = True
         self.stats.die(self)
-        yield self.current_island.r.release(self.current_request)
+        return self.current_island.r.release(self.current_request)
 
     def move_island(self):
-        mt = self.weighted_choice(self.current_island.can_see, self.current_island.probs, self.visited)
+        """
+        :rtype: simpy.events.Event
+        """
+        mt = self.weighted_choice(self.current_island.can_see, self.visited, self.current_island.probs)
         if mt is None:
-            yield self.go_back()
+            return self.go_back()
         else:
             move_to = self.islands[mt]
             if move_to.r.capacity > move_to.r.count:
@@ -104,15 +154,20 @@ class Population(object):
                 self.backtrack.append(self.current_island.id)
                 logger.debug('%05d Population %s moved from %s to %s', self.env.now, self.id, self.current_island,
                              move_to)
-                yield self._move_to(move_to)
+                e = self._move_to(move_to)
+                e.callbacks.append(self._update_island_callback(move_to))
+                return e
             else:
                 logger.info(
                     '%05d Population %s tried to move from %s to %s but were rebuffed by existing population',
                     self.env.now, self.id, self.current_island, move_to)
-                yield None
+                return self.env.event().succeed()
 
     @property
     def consumption_amount(self):
+        """
+        :rtype: float
+        """
         return self.consumption_rate * self.tick_size
 
     def unstarve(self):
@@ -122,10 +177,7 @@ class Population(object):
             else:
                 self.times_starved = 0
 
-    def starve(self):
-        to_consume = self.current_island.resource_level
-        if to_consume > 0:
-            yield self.current_island.c.get(to_consume)
+    def starve(self, to_consume):
         self.times_starved += min(1, (self.consumption_amount - to_consume))
         if self.times_starved >= self.die_after:
             logger.info("%05d Population %s STARVED TO DEATH on %s", self.env.now, self.id, self.current_island)
@@ -143,14 +195,16 @@ class Population(object):
                              self.env.now, self.id, self.consumption_amount, self.current_island,
                              self.current_island.resource_level, self.current_island.capacity)
             else:
-                self.starve()
+                to_consume = self.current_island.resource_level
+                if to_consume > 0:
+                    yield self.current_island.c.get(to_consume)
+                self.starve(to_consume)
             yield self.env.timeout(self.tick_size)
 
     def run(self):
         while not self.finished:
             if self.will_move:
-                for y in self.move_island():
-                    yield y
+                yield self.move_island()
             yield self.env.timeout(self.tick_size)
         if not self.dead:
             self.stats.make_it(self)
