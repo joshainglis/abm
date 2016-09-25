@@ -1,11 +1,12 @@
-import random
 import logging
+import random
 
-from numpy import in1d
+from numpy import in1d, zeros, uint32
 from numpy.random.mtrand import choice
 from simpy import Container
 
-from abm.config import TICK_SIZE, DIE_AFTER_N_STARVATION, FINISH_ISLAND, START_ISLAND, EXP_LAMBDA
+from abm.config import TICK_SIZE, DIE_AFTER_N_STARVATION, FINISH_ISLAND, START_ISLAND, EXP_LAMBDA, MIN_POP_BREAK_SIZE, \
+    MAX_CHILD_POPULATIONS, LIMIT_SPLITS
 
 logger = logging.getLogger(__name__)
 
@@ -79,22 +80,18 @@ class Population(object):
         """
         return self.dead or self.current_island.id == self.finish_island
 
-    @property
-    def will_move(self):
-        """
-        :rtype: bool
-        """
-        return self.current_island.id == self.start_island or \
-               self.current_island.resource_usage < random.expovariate(10.0 / self.move_propensity)
+    # @property
+    # def will_move(self):
+    #     """
+    #     :rtype: bool
+    #     """
+    #     return self.current_island.id == self.start_island or \
+    #            self.current_island.resource_usage < random.expovariate(10.0 / self.move_propensity)
 
     def _update_island_callback(self, new_island):
         def callback(event):
             """
-
-            :param event:
             :type event: simpy.events.Event
-            :return:
-            :rtype:
             """
             if event.ok:
                 self._update_island(new_island)
@@ -122,6 +119,7 @@ class Population(object):
         :rtype: simpy.events.Event
         """
         if len(self.backtrack) == 0:
+            self.backtrack.append(self.start_island)
             logger.debug("POPULATION %s IS A FAILURE!!!!", self.id)
             return self.die()
         else:
@@ -202,11 +200,169 @@ class Population(object):
             yield self.env.timeout(self.tick_size)
 
     def run(self):
+        yield self.env.timeout(self.tick_size)
         while not self.finished:
             if self.will_move:
                 yield self.move_island()
             yield self.env.timeout(self.tick_size)
         if not self.dead:
+            self.stats.make_it(self)
+
+
+class VaryingPopulation(Population):
+    def __init__(self, env, pop_id, population_size, stats, islands, start_island, finish_island, ignore_islands,
+                 consumption_rate=1.0, move_propensity=1.0, die_after=100, tick_size=1):
+        self.population_size = population_size
+        # self.demography = zeros((2, 100), dtype=uint32)
+
+        self.child_populations = []
+        self.stasis = False
+        self.moving = False
+        super(VaryingPopulation, self).__init__(env, pop_id, stats, islands, start_island,
+                                                finish_island, ignore_islands, consumption_rate, move_propensity,
+                                                die_after, tick_size)
+
+    def _update_island(self, new_island):
+        """
+        :type new_island: abm.resources.Island
+        """
+        self.stats.traverse(self.current_island.id, new_island.id)
+        if not self.moving:
+            new_pop = int(0.4 * self.population_size)
+            stay_pop = self.population_size - new_pop
+            new_population = VaryingPopulation(
+                env=self.env,
+                pop_id='{}:{}'.format(self.id, new_island.id),
+                population_size=new_pop,
+                stats=self.stats,
+                islands=self.islands,
+                start_island=new_island.id,
+                finish_island=self.finish_island,
+                ignore_islands=self.visited,
+                consumption_rate=self.consumption_rate,
+                move_propensity=self.move_propensity,
+                die_after=self.die_after,
+                tick_size=self.tick_size
+            )
+
+            self.child_populations.append(new_population)
+            self.population_size = stay_pop
+            new_island.populations.add(new_population)
+        else:
+            if self in self.current_island.populations:
+                self.current_island.populations.remove(self)
+            self.current_island = new_island
+            self.current_island.populations.add(self)
+
+    def go_back(self):
+        return self.env.event().succeed()
+
+    def weighted_choice(self, islands, visited, probs=None):
+        """
+        :type islands: numpy.ndarray
+        :type probs: numpy.ndarray
+        :type visited: set[int]
+        :rtype: int
+        """
+        full = {x for x in islands if self.islands[x].r.capacity == self.islands[x].r.count}
+        mask = in1d(islands, list(full), invert=True)
+        m = islands[mask]
+        if len(m) > 0:
+            c = choice(m, size=1)
+            if len(c) > 0:
+                return c[0]
+
+    @property
+    def finished(self):
+        if LIMIT_SPLITS:
+            if len(self.child_populations) >= MAX_CHILD_POPULATIONS:
+                self.stasis = True
+        return super(VaryingPopulation, self).finished or self.stasis
+
+    def _move_to(self, new_island):
+        """
+        :type new_island: abm.resources.Island
+        :rtype: simpy.events.Event
+        """
+        if self.population_size < MIN_POP_BREAK_SIZE:
+            self.moving = True
+            return (
+                new_island.r.request() &
+                self.current_island.r.release(self.current_request) &
+                self.env.timeout(self.tick_size)
+            )
+        self.moving = False
+        return new_island.r.request() & self.env.timeout(self.tick_size)
+
+    @property
+    def will_move(self):
+        logger.debug("%05d Population %s: %s %.2f", self.env.now, self.id, self.current_island,
+                     self.current_island.density)
+        on_start_island = self.current_island.id == START_ISLAND
+        near_density = self.current_island.density < random.uniform(0.2, 0.45)
+        return (on_start_island or near_density) and not self.stasis
+
+    def move_island(self):
+        """
+        :rtype: simpy.events.Event
+        """
+        mt = self.weighted_choice(self.current_island.can_see, self.visited, self.current_island.probs)
+        if mt is None:
+            self.child_populations.append(None)
+            return self.env.event().succeed()
+        else:
+            move_to = self.islands[mt]
+            if move_to.r.capacity > move_to.r.count:
+                logger.debug(
+                    '%05d Population %s spawned new population from island %s to %s',
+                    self.env.now, self.id, self.current_island, move_to
+                )
+                e = self._move_to(move_to)
+                e.callbacks.append(self._update_island_callback(move_to))
+                return e
+            else:
+                logger.info(
+                    '%05d Population %s tried to move from %s to %s but were rebuffed by existing population',
+                    self.env.now, self.id, self.current_island, move_to)
+                return self.env.event().succeed()
+
+    def breed(self):
+        """
+        Survival Ratio:
+          0-15:  0.55-0.65
+          15-50: 0.41-0.85
+        Reproductive Age:
+          15-50
+        TFR:
+          6-8 children per woman per fertility window
+        Female Ratio:
+          0.5
+        """
+
+        p = self.population_size
+
+        # 1/4 of women are of breeding age. 1 in 5 women of breeding age have a baby per year.
+        r = float(self.tick_size) * 0.25 * (random.uniform(6.0, 8.0) / 35)
+        d = float(self.tick_size) * (0.25 * random.uniform(0.35, 0.45) / 15 + 0.75 * random.uniform(0.15, 0.59) / 35)
+
+        new_pop = int(round(p + p * (r - d) * self.current_island.density))
+        logger.debug("%05d Population %s: %.2f + %.2f * %.2f * %.2f -> %.2f", self.env.now, self.id,
+                     p, p, r, self.current_island.density, new_pop)
+        self.population_size = new_pop
+
+    def consume(self):
+        yield self.env.timeout(self.tick_size)
+        while True:
+            self.breed()
+            yield self.env.timeout(self.tick_size)
+
+    def run(self):
+        yield self.env.timeout(self.tick_size)
+        while not self.finished:
+            if self.will_move:
+                self.current_request = yield self.move_island()
+            yield self.env.timeout(self.tick_size)
+        if not self.dead and not self.stasis:
             self.stats.make_it(self)
 
 

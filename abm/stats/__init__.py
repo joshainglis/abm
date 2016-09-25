@@ -1,17 +1,28 @@
 import logging
 
+import numpy as np
+from os.path import join
+
 logger = logging.getLogger(__name__)
 
 
 class StatTracker(object):
-    def __init__(self, g):
+    def __init__(self, g, islands, max_years):
         """
         :type g: networkx.DiGraph
+        :type islands: dict[int, abm.resources.Island]
         """
         self.g = g
         self.dead = {}
         self.in_aus = {}
-        self.paths = {}
+        self.islands = islands.values()
+        self.pop_history = np.zeros((len(islands), max_years), dtype=np.uint32)
+
+    def update_populations(self, timestep):
+        """
+        :type timestep: int
+        """
+        self.pop_history[:, timestep] = [island.total_population for island in self.islands]
 
     @property
     def num_in_aus(self):
@@ -54,3 +65,11 @@ class StatTracker(object):
         for i in xrange(len(pop.backtrack) - 1):
             a, b = pop.backtrack[i:i + 1]
             self.traverse(a, b)
+
+    def finish(self):
+        with open(join('output', 'population.npy'), 'wb') as nf:
+            np.savez(nf, history=self.pop_history, map=np.array([i.id for i in self.islands]))
+        with open('stats.txt', 'w') as nf:
+            nf.write('island,capacity,population')
+            for island in self.islands:
+                nf.write('{},{},{}\n'.format(island.id, island.carrying_capacity, island.total_population))

@@ -1,7 +1,11 @@
+import logging
+
 from numpy import array, int32
 from simpy import Resource, Container
 
-from abm.config import MAX_CAPACITY, DEG_TO_KM, TICK_SIZE
+from abm.config import DEG_TO_KM, TICK_SIZE
+
+logger = logging.getLogger(__name__)
 
 
 class Island(object):
@@ -20,8 +24,8 @@ class Island(object):
         :param can_see:
         :type can_see: dict[int, float]
         """
-        # r_cap = int(area) + 1
-        r_cap = MAX_CAPACITY
+        r_cap = int(area) + 1
+        # r_cap = MAX_CAPACITY
         perimeter = int(perimeter * DEG_TO_KM) + 1
 
         self.env = env
@@ -33,6 +37,13 @@ class Island(object):
         self.r = Resource(self.env, capacity=r_cap)
         self.c = Container(self.env, capacity=perimeter, init=perimeter)
         self.action = self.env.process(self.replenish())
+        self._populations = set()
+
+        self._pop = None
+        self._pop_calc_time = None
+
+        self._density = None
+        self._density_calc_time = None
 
     @property
     def resource_level(self):
@@ -63,6 +74,42 @@ class Island(object):
         :rtype: float
         """
         return self.c.level / float(self.c.capacity)
+
+    @property
+    def populations(self):
+        """
+        :rtype: set[abm.agent.population.Population]
+        """
+        return self._populations
+
+    @property
+    def total_population(self):
+        """
+        :rtype: int
+        """
+        if not self.env.now == self._pop_calc_time:
+            self._pop = sum(p.population_size for p in self.populations)
+            self._pop_calc_time = self.env.now
+        return self._pop
+
+    @property
+    def carrying_capacity(self):
+        """
+        :rtype: int
+        """
+
+        return self.perimeter * 5
+
+    @property
+    def density(self):
+        """
+        :rtype: float
+        """
+        if self._density_calc_time != self.env.now:
+            logger.debug('island pop: {}, carrying capacity: {}'.format(self.total_population, self.carrying_capacity))
+            self._density = 1.0 - min(2.0, self.total_population / float(self.carrying_capacity))
+            self._density_calc_time = self.env.now
+        return self._density
 
     def normalise(self, can_see):
         """
