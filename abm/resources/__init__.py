@@ -1,6 +1,7 @@
 import logging
 
 from numpy import array, int32
+from numpy.random import normal
 from simpy import Resource, Container
 
 from abm.config import DEG_TO_KM, TICK_SIZE
@@ -44,6 +45,9 @@ class Island(object):
 
         self._density = None
         self._density_calc_time = None
+
+        self._capacity = None
+        self._capacity_calc_time = None
 
     @property
     def resource_level(self):
@@ -90,18 +94,80 @@ class Island(object):
         if not self.env.now == self._pop_calc_time:
             self._pop = sum(p.population_size for p in self.populations)
             self._pop_calc_time = self.env.now
+            if self._pop > 1000 or self.capacity > 1000:
+                logger.debug("Island: {}, CarryingCap: {}, Pop: {}".format(self.id, self.capacity, self._pop))
         return self._pop
+
+    @staticmethod
+    def birdsell_carrying_capacity(rainfall):
+        """
+
+        :param rainfall: yearly rainfall in inches
+        :type rainfall: float
+        :return: hundreds of square miles that can support 500 people
+        :rtype: float
+        """
+        return 7112.8 * (rainfall ** (-1.58451))
+
+    @staticmethod
+    def hundreds_of_square_miles_to_square_kilometers(hsm):
+        """
+
+        :param hsm: hundreds of square miles
+        :type hsm: float
+        :return: square kilometers
+        :rtype: float
+        """
+        return hsm * 258.999
+
+    @classmethod
+    def hsm_per_500_person_to_people_per_square_kilometer(cls, hsm_500p):
+        """
+
+        :param hsm_500p: hundreds of square miles per 500 person
+        :type hsm_500p: float
+        :return: People per square kilometer
+        :rtype: float
+        """
+        sk_500p = cls.hundreds_of_square_miles_to_square_kilometers(hsm_500p)
+        sk_pp = sk_500p / 500.0
+        return sk_pp ** -1
+
+    @staticmethod
+    def mm_to_inches(mm):
+        """
+        :param mm: Millimetres
+        :type mm: float
+        :return: Inches
+        :rtype: float
+        """
+        return 0.0393701 * mm
+
+    @staticmethod
+    def deg_to_sqkm(deg):
+        """
+        :param deg: Square degrees
+        :type deg: float
+        :return: square kilometres
+        :rtype: float
+        """
+        return (111.32 ** 2) * deg
 
     @property
     def carrying_capacity(self):
         """
         :rtype: int
         """
-
-        return self.perimeter * 5
+        if self._capacity_calc_time != self.env.now:
+            rainfall_inches = self.mm_to_inches(self.env.rainfall)
+            hsm_500p = self.birdsell_carrying_capacity(rainfall_inches)
+            pp_sk = self.hsm_per_500_person_to_people_per_square_kilometer(hsm_500p)
+            self._capacity = pp_sk * self.deg_to_sqkm(self.area) * max(1.53, normal(3.348, 1.342))
+            # logger.debug("rainfall_mm: {}, rainfall_inches: {}, ")
+        return self._capacity
 
     @property
-    def density(self):
+    def free_carrying_capacity(self):
         """
         :rtype: float
         """

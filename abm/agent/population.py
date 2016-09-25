@@ -1,7 +1,8 @@
 import logging
 import random
 
-from numpy import in1d, zeros, uint32
+from numpy import in1d
+from numpy.random import exponential
 from numpy.random.mtrand import choice
 from simpy import Container
 
@@ -211,11 +212,13 @@ class Population(object):
 
 class VaryingPopulation(Population):
     def __init__(self, env, pop_id, population_size, stats, islands, start_island, finish_island, ignore_islands,
-                 consumption_rate=1.0, move_propensity=1.0, die_after=100, tick_size=1):
+                 consumption_rate=1.0, move_propensity=1.0, die_after=100, tick_size=1, ignore_start_islands=None):
+        self.ignore_start_islands = ignore_start_islands if ignore_start_islands is not None else {start_island}
         self.population_size = population_size
         # self.demography = zeros((2, 100), dtype=uint32)
 
         self.child_populations = []
+        self.path = []
         self.stasis = False
         self.moving = False
         super(VaryingPopulation, self).__init__(env, pop_id, stats, islands, start_island,
@@ -226,6 +229,10 @@ class VaryingPopulation(Population):
         """
         :type new_island: abm.resources.Island
         """
+        if len(self.path) > 1:
+            for i in xrange(len(self.path) - 1):
+                a, b = self.path[i:i + 2]
+                self.stats.traverse(a, b)
         self.stats.traverse(self.current_island.id, new_island.id)
         if not self.moving:
             new_pop = int(0.4 * self.population_size)
@@ -242,8 +249,10 @@ class VaryingPopulation(Population):
                 consumption_rate=self.consumption_rate,
                 move_propensity=self.move_propensity,
                 die_after=self.die_after,
-                tick_size=self.tick_size
+                tick_size=self.tick_size,
+                ignore_start_islands=self.ignore_start_islands
             )
+            new_population.path = self.path + [new_island.id]
 
             self.child_populations.append(new_population)
             self.population_size = stay_pop
@@ -251,6 +260,7 @@ class VaryingPopulation(Population):
         else:
             if self in self.current_island.populations:
                 self.current_island.populations.remove(self)
+            self.path.append(new_island.id)
             self.current_island = new_island
             self.current_island.populations.add(self)
 
@@ -264,7 +274,9 @@ class VaryingPopulation(Population):
         :type visited: set[int]
         :rtype: int
         """
-        full = {x for x in islands if self.islands[x].r.capacity == self.islands[x].r.count}
+        full = {x for x in islands if self.islands[x].r.capacity == self.islands[x].r.count} | visited
+        if self.current_island.id == START_ISLAND:
+            full |= self.ignore_start_islands
         mask = in1d(islands, list(full), invert=True)
         m = islands[mask]
         if len(m) > 0:
@@ -297,9 +309,9 @@ class VaryingPopulation(Population):
     @property
     def will_move(self):
         logger.debug("%05d Population %s: %s %.2f", self.env.now, self.id, self.current_island,
-                     self.current_island.density)
+                     self.current_island.free_carrying_capacity)
         on_start_island = self.current_island.id == START_ISLAND
-        near_density = self.current_island.density < random.uniform(0.2, 0.45)
+        near_density = self.current_island.free_carrying_capacity < exponential(0.1)
         return (on_start_island or near_density) and not self.stasis
 
     def move_island(self):
@@ -345,9 +357,9 @@ class VaryingPopulation(Population):
         r = float(self.tick_size) * 0.25 * (random.uniform(6.0, 8.0) / 35)
         d = float(self.tick_size) * (0.25 * random.uniform(0.35, 0.45) / 15 + 0.75 * random.uniform(0.15, 0.59) / 35)
 
-        new_pop = int(round(p + p * (r - d) * self.current_island.density))
+        new_pop = int(round(p + p * (r - d) * self.current_island.free_carrying_capacity))
         logger.debug("%05d Population %s: %.2f + %.2f * %.2f * %.2f -> %.2f", self.env.now, self.id,
-                     p, p, r, self.current_island.density, new_pop)
+                     p, p, r, self.current_island.free_carrying_capacity, new_pop)
         self.population_size = new_pop
 
     def consume(self):

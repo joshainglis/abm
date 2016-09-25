@@ -1,7 +1,8 @@
 import logging
+from os import mkdir
 
 import numpy as np
-from os.path import join
+from os.path import join, exists
 
 logger = logging.getLogger(__name__)
 
@@ -66,10 +67,11 @@ class StatTracker(object):
             a, b = pop.backtrack[i:i + 1]
             self.traverse(a, b)
 
-    def finish(self):
-        with open(join('output', 'population.npy'), 'wb') as nf:
-            np.savez(nf, history=self.pop_history, map=np.array([i.id for i in self.islands]))
-        with open('stats.txt', 'w') as nf:
-            nf.write('island,capacity,population')
-            for island in self.islands:
-                nf.write('{},{},{}\n'.format(island.id, island.carrying_capacity, island.total_population))
+    def finish(self, save_path=None, run_number=0):
+        save_path = save_path if save_path is not None else 'output'
+        save_path = join(save_path, 'pop_hist')
+        if not exists(save_path):
+            mkdir(save_path)
+
+        with open(join(save_path, 'population_{:04d}.npy'.format(run_number)), 'wb') as nf:
+            np.savez_compressed(nf, history=self.pop_history, map=np.array([i.id for i in self.islands]))
