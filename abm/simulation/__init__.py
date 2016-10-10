@@ -16,8 +16,8 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-NUM_SIMULATIONS = 500
-SIM_YEARS = 1000
+NUM_SIMULATIONS = 2
+SIM_YEARS = 500
 MAX_FINISHERS = 1000
 CURRENT_RAINFALL = 2730
 RAINFALL_MULTIPLIER = 0.66
@@ -25,8 +25,16 @@ RAINFALL = CURRENT_RAINFALL * RAINFALL_MULTIPLIER
 RAINFALL_SD = 500
 # ENTRY_ISLANDS = ENTRY_TAIWAN
 START_POPULATION = 500
+ISLAND_SIZE_CUTOFF_KM2 = 10
 
 TOTAL = 3 * NUM_SIMULATIONS * SIM_YEARS
+
+
+def sqm_to_deg(sqm):
+    return (1.0 / (111.32 ** 2)) * sqm
+
+
+ISLAND_SIZE_CUTOFF_DEG2 = sqm_to_deg(ISLAND_SIZE_CUTOFF_KM2)
 
 if __name__ == '__main__':
     COUNTER = 0
@@ -50,6 +58,8 @@ if __name__ == '__main__':
             env.rainfall = max(1, np.random.normal(RAINFALL, RAINFALL_SD))
             islands = {}
 
+            to_del = [node for node, data in g.nodes_iter(data=True) if data['area'] < ISLAND_SIZE_CUTOFF_DEG2]
+            g.remove_nodes_from(to_del)
             for node, data in g.nodes_iter(data=True):
                 islands[node] = Island(
                     env, node, data['area'], data['perimeter'],
@@ -77,8 +87,8 @@ if __name__ == '__main__':
                     env.rainfall = max(1, np.random.normal(RAINFALL, RAINFALL_SD))
                     t = env.now
                     COUNTER += 1
-                    done = COUNTER / float(TOTAL)
-                    logger.info("%.4f%% Entry: %s Sim Run: %04d Year: %04d", done, sim_name, sim_number, env.now)
+                    done = (COUNTER / float(TOTAL)) * 100.0
+                    logger.info("%02.4f%% Entry: %s Sim Run: %04d Year: %04d", done, sim_name, sim_number, env.now)
                 try:
                     env.step()
                 except EmptySchedule:

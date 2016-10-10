@@ -43,6 +43,16 @@ class StatTracker(object):
         else:
             self.g.edge[from_island][to_island]['traversals'] += 1
 
+    def path_traverse(self, from_island, to_island):
+        """
+        :type from_island: int
+        :type to_island: int
+        """
+        if 'traversals' not in self.g.edge[from_island][to_island]:
+            self.g.edge[from_island][to_island]['path'] = 1
+        else:
+            self.g.edge[from_island][to_island]['path'] += 1
+
     def die(self, pop):
         """
         :type pop: abm.agent.population.Population

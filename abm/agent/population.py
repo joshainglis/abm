@@ -218,7 +218,7 @@ class VaryingPopulation(Population):
         # self.demography = zeros((2, 100), dtype=uint32)
 
         self.child_populations = []
-        self.path = []
+        self.path = [start_island]
         self.stasis = False
         self.moving = False
         super(VaryingPopulation, self).__init__(env, pop_id, stats, islands, start_island,
@@ -232,8 +232,11 @@ class VaryingPopulation(Population):
         if len(self.path) > 1:
             for i in xrange(len(self.path) - 1):
                 a, b = self.path[i:i + 2]
-                self.stats.traverse(a, b)
+                self.stats.path_traverse(a, b)
+        self.stats.path_traverse(self.current_island.id, new_island.id)
         self.stats.traverse(self.current_island.id, new_island.id)
+        logger.info('Path: %s', [(self.path[i:i + 2], self.stats.g[self.path[i]][self.path[i + 1]]['path']) for i in
+                                 xrange(len(self.path) - 1)])
         if not self.moving:
             new_pop = int(0.4 * self.population_size)
             stay_pop = self.population_size - new_pop
@@ -274,7 +277,8 @@ class VaryingPopulation(Population):
         :type visited: set[int]
         :rtype: int
         """
-        full = {x for x in islands if self.islands[x].r.capacity == self.islands[x].r.count} | visited
+        full = {x for x in islands if
+                x in self.islands and self.islands[x].r.capacity == self.islands[x].r.count} | visited
         if self.current_island.id == START_ISLAND:
             full |= self.ignore_start_islands
         mask = in1d(islands, list(full), invert=True)
