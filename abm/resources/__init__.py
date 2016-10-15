@@ -25,7 +25,7 @@ class Island(object):
         :param can_see:
         :type can_see: dict[int, float]
         """
-        r_cap = int(area) + 1
+        r_cap = int(area / 0.17384) + 1
         # r_cap = MAX_CAPACITY
         perimeter = int(perimeter * DEG_TO_KM) + 1
 
@@ -162,7 +162,7 @@ class Island(object):
             rainfall_inches = self.mm_to_inches(self.env.rainfall)
             hsm_500p = self.birdsell_carrying_capacity(rainfall_inches)
             pp_sk = self.hsm_per_500_person_to_people_per_square_kilometer(hsm_500p)
-            self._capacity = pp_sk * self.deg_to_sqkm(self.area) * max(1.53, normal(3.348, 1.342))
+            self._capacity = pp_sk * self.deg_to_sqkm(self.area)  # * min(5.58, max(1.53, normal(3.348, 1.342)))
             # logger.debug("rainfall_mm: {}, rainfall_inches: {}, ")
         return self._capacity
 
@@ -187,6 +187,8 @@ class Island(object):
         """
         if len(can_see) > 0:
             islands, probs = zip(*can_see.items())
+            probs = [(x['ab'] / self.area) * (x['ba'] / x['d']) for x in probs]
+            # logger.info(probs)
             probs = array(probs)
             islands = array(islands, dtype=int32)
         else:

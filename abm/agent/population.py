@@ -7,7 +7,7 @@ from numpy.random.mtrand import choice
 from simpy import Container
 
 from abm.config import TICK_SIZE, DIE_AFTER_N_STARVATION, FINISH_ISLAND, START_ISLAND, EXP_LAMBDA, MIN_POP_BREAK_SIZE, \
-    MAX_CHILD_POPULATIONS, LIMIT_SPLITS
+    MAX_CHILD_POPULATIONS, LIMIT_SPLITS, MAX_POPULATION_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ class Population(object):
     """
     :type env: simpy.Environment
     :type stats: abm.stats.StatTracker
-    :type id: int
+    :type id: str
     :type islands: dict[int, abm.resources.Island]
     :type start_island: int
     :type finish_island: int
@@ -58,6 +58,13 @@ class Population(object):
         self._run = self.env.process(self.run())
         self._consume = self.env.process(self.consume())
 
+        if self.current_island.id not in {START_ISLAND, FINISH_ISLAND}:
+            self.stats.add_pop(self)
+
+    @property
+    def origin(self):
+        return self.id.split(':', 1)[0]
+
     @staticmethod
     def weighted_choice(islands, visited, probs=None):
         """
@@ -81,13 +88,13 @@ class Population(object):
         """
         return self.dead or self.current_island.id == self.finish_island
 
-    # @property
-    # def will_move(self):
-    #     """
-    #     :rtype: bool
-    #     """
-    #     return self.current_island.id == self.start_island or \
-    #            self.current_island.resource_usage < random.expovariate(10.0 / self.move_propensity)
+    @property
+    def will_move(self):
+        """
+        :rtype: bool
+        """
+        return self.current_island.id == self.start_island or \
+               self.current_island.resource_usage < random.expovariate(10.0 / self.move_propensity)
 
     def _update_island_callback(self, new_island):
         def callback(event):
@@ -103,7 +110,7 @@ class Population(object):
         """
         :type new_island: abm.resources.Island
         """
-        self.stats.traverse(self.current_island.id, new_island.id)
+        self.stats.traverse(self.origin, self.current_island.id, new_island.id)
         self.current_island = new_island
 
     def _move_to(self, new_island):
@@ -218,7 +225,7 @@ class VaryingPopulation(Population):
         # self.demography = zeros((2, 100), dtype=uint32)
 
         self.child_populations = []
-        self.path = [start_island]
+        self.path = [(0, start_island)]
         self.stasis = False
         self.moving = False
         super(VaryingPopulation, self).__init__(env, pop_id, stats, islands, start_island,
@@ -229,16 +236,25 @@ class VaryingPopulation(Population):
         """
         :type new_island: abm.resources.Island
         """
-        if len(self.path) > 1:
-            for i in xrange(len(self.path) - 1):
-                a, b = self.path[i:i + 2]
-                self.stats.path_traverse(a, b)
-        self.stats.path_traverse(self.current_island.id, new_island.id)
-        self.stats.traverse(self.current_island.id, new_island.id)
-        logger.info('Path: %s', [(self.path[i:i + 2], self.stats.g[self.path[i]][self.path[i + 1]]['path']) for i in
-                                 xrange(len(self.path) - 1)])
+        # logger.info()
+        if self.current_island.id != new_island.id:
+            if len(self.path) > 1:
+                for i in xrange(len(self.path) - 1):
+                    (_, a), (_, b) = self.path[i:i + 2]
+                    self.stats.genetic_traverse(self.origin, a, b)
+            self.stats.genetic_traverse(self.origin, self.current_island.id, new_island.id)
+            self.stats.traverse(self.origin, self.current_island.id, new_island.id)
+            logger.debug(
+                'Path: %s',
+                [
+                    (
+                        self.path[i:i + 2],
+                        self.stats.g[self.path[i][1]][self.path[i + 1][1]][self.origin]['path']
+                    ) for i in xrange(len(self.path) - 1)
+                    ]
+            )
         if not self.moving:
-            new_pop = int(0.4 * self.population_size)
+            new_pop = int(random.uniform(0.3, 0.4) * self.population_size)
             stay_pop = self.population_size - new_pop
             new_population = VaryingPopulation(
                 env=self.env,
@@ -255,7 +271,10 @@ class VaryingPopulation(Population):
                 tick_size=self.tick_size,
                 ignore_start_islands=self.ignore_start_islands
             )
-            new_population.path = self.path + [new_island.id]
+            if self.current_island.id != new_island.id:
+                new_population.path = [x for x in self.path] + [(self.env.now, new_island.id)]
+            else:
+                new_population.path = [x for x in self.path]
 
             self.child_populations.append(new_population)
             self.population_size = stay_pop
@@ -263,7 +282,8 @@ class VaryingPopulation(Population):
         else:
             if self in self.current_island.populations:
                 self.current_island.populations.remove(self)
-            self.path.append(new_island.id)
+            if self.current_island.id != new_island.id:
+                self.path.append((self.env.now, new_island.id))
             self.current_island = new_island
             self.current_island.populations.add(self)
 
@@ -283,8 +303,9 @@ class VaryingPopulation(Population):
             full |= self.ignore_start_islands
         mask = in1d(islands, list(full), invert=True)
         m = islands[mask]
+        p = probs[mask] / probs[mask].sum() if probs is not None else None
         if len(m) > 0:
-            c = choice(m, size=1)
+            c = choice(m, size=1, p=p)
             if len(c) > 0:
                 return c[0]
 
@@ -295,20 +316,27 @@ class VaryingPopulation(Population):
                 self.stasis = True
         return super(VaryingPopulation, self).finished or self.stasis
 
+    def _transfer_request(self, event):
+        self.current_request = self._tmp_request
+        self._tmp_request = None
+
     def _move_to(self, new_island):
         """
         :type new_island: abm.resources.Island
         :rtype: simpy.events.Event
         """
+        self._tmp_request = new_island.r.request()
         if self.population_size < MIN_POP_BREAK_SIZE:
             self.moving = True
-            return (
-                new_island.r.request() &
+            req = (
+                self._tmp_request &
                 self.current_island.r.release(self.current_request) &
                 self.env.timeout(self.tick_size)
             )
+            req.callbacks.append(self._transfer_request)
+            return req
         self.moving = False
-        return new_island.r.request() & self.env.timeout(self.tick_size)
+        return self._tmp_request & self.env.timeout(self.tick_size)
 
     @property
     def will_move(self):
@@ -316,15 +344,26 @@ class VaryingPopulation(Population):
                      self.current_island.free_carrying_capacity)
         on_start_island = self.current_island.id == START_ISLAND
         near_density = self.current_island.free_carrying_capacity < exponential(0.1)
-        return (on_start_island or near_density) and not self.stasis
+        return (on_start_island or self.too_populous or near_density) and not self.stasis
+
+    @property
+    def too_populous(self):
+        return self.population_size > MAX_POPULATION_SIZE
 
     def move_island(self):
         """
         :rtype: simpy.events.Event
         """
-        mt = self.weighted_choice(self.current_island.can_see, self.visited, self.current_island.probs)
+        if self.too_populous \
+            and self.current_island.r.capacity > self.current_island.r.count \
+            and self.current_island.id != START_ISLAND:
+            mt = self.current_island.id
+        else:
+            mt = self.weighted_choice(self.current_island.can_see, self.visited, self.current_island.probs)
+        if mt == FINISH_ISLAND:
+            self.visited |= {mt}
         if mt is None:
-            self.child_populations.append(None)
+            # self.child_populations.append(None)
             return self.env.event().succeed()
         else:
             move_to = self.islands[mt]
@@ -337,7 +376,7 @@ class VaryingPopulation(Population):
                 e.callbacks.append(self._update_island_callback(move_to))
                 return e
             else:
-                logger.info(
+                logger.debug(
                     '%05d Population %s tried to move from %s to %s but were rebuffed by existing population',
                     self.env.now, self.id, self.current_island, move_to)
                 return self.env.event().succeed()
