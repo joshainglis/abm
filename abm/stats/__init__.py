@@ -46,6 +46,10 @@ class StatTracker(object):
         return len(self.in_aus)
 
     @property
+    def num_dead(self):
+        return len(self.dead)
+
+    @property
     def finished(self):
         return len(self.dead) + len(self.in_aus)
 
@@ -98,6 +102,7 @@ class StatTracker(object):
         """
         :type pop: abm.agent.population.Population
         """
+        logger.info('%05d Population %s is no more', pop.env.now, pop.id)
         self.dead[pop.id] = pop.env.now
 
         n = self.g.node[pop.current_island.id]
@@ -111,6 +116,7 @@ class StatTracker(object):
         :type pop: abm.agent.population.VaryingPopulation
         :rtype:
         """
+        logger.warning(pop.path)
         if len(pop.path) > 1:
             for i in xrange(len(pop.path) - 1):
                 (_, a), (_, b) = pop.path[i:i + 2]
@@ -128,9 +134,6 @@ class StatTracker(object):
             'duration': pop.env.now - pop.start,
             'path': pop.backtrack
         }
-        for i in xrange(len(pop.backtrack) - 1):
-            a, b = pop.backtrack[i:i + 1]
-            self.traverse(pop.origin, a, b)
 
     def finish(self, run_number=0):
         save_path = join(self.save_path, 'pop_hist')

@@ -8,6 +8,7 @@ from simpy import Container
 
 from abm.config import TICK_SIZE, DIE_AFTER_N_STARVATION, FINISH_ISLAND, START_ISLAND, EXP_LAMBDA, MIN_POP_BREAK_SIZE, \
     MAX_CHILD_POPULATIONS, LIMIT_SPLITS, MAX_POPULATION_SIZE
+from abm.resources import Island
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,8 @@ class Population(object):
     """
 
     def __init__(self, env, pop_id, stats, islands, start_island, finish_island, ignore_islands,
-                 consumption_rate=1.0, move_propensity=1.0, die_after=100, tick_size=1):
+                 consumption_rate=1.0, move_propensity=1.0, die_after=100, tick_size=1, ignore_start_islands=None,
+                 population_size=None, isolate=True):
         """
         :type env: simpy.Environment
         :type stats: abm.stats.StatTracker
@@ -32,6 +34,9 @@ class Population(object):
         :type islands: dict[int, abm.resources.Island]
         :type start_island: int
         """
+        self.ignore_start_islands = ignore_start_islands if ignore_start_islands is not None else {start_island}
+        self.population_size = population_size
+        self.path = [(0, start_island)]
         self.id = pop_id
         self.env = env
         self.stats = stats
@@ -44,7 +49,16 @@ class Population(object):
         self.consumption_rate = consumption_rate
 
         self.visited = {self.start_island} | ignore_islands
-        self.islands = islands
+        self.islands = islands if not isolate else {
+            node: Island(
+                env=self.env,
+                id=island.id,
+                area=island.area,
+                perimeter=island.perimeter,
+                can_see=island._can_see,
+                replenish_rate=island.replenish_rate
+            ) for node, island in islands.iteritems()
+            }
         self.current_island = islands[self.start_island]
         self.start = self.env.now
         self.tick_size = tick_size
@@ -65,15 +79,18 @@ class Population(object):
     def origin(self):
         return self.id.split(':', 1)[0]
 
-    @staticmethod
-    def weighted_choice(islands, visited, probs=None):
+    def weighted_choice(self, islands, visited, probs=None):
         """
         :type islands: numpy.ndarray
         :type probs: numpy.ndarray
         :type visited: set[int]
         :rtype: int
         """
-        mask = in1d(islands, list(visited), invert=True)
+        full = {x for x in islands if
+                x in self.islands and self.islands[x].r.capacity == self.islands[x].r.count} | visited
+        if self.current_island.id == START_ISLAND:
+            full |= self.ignore_start_islands
+        mask = in1d(islands, list(full), invert=True)
         m = islands[mask]
         p = probs[mask] / probs[mask].sum() if probs is not None else None
         if len(m) > 0:
@@ -101,7 +118,7 @@ class Population(object):
             """
             :type event: simpy.events.Event
             """
-            if event.ok:
+            if event.ok and new_island.id != self.current_island.id:
                 self._update_island(new_island)
 
         return callback
@@ -111,6 +128,8 @@ class Population(object):
         :type new_island: abm.resources.Island
         """
         self.stats.traverse(self.origin, self.current_island.id, new_island.id)
+        if self.current_island.id != new_island.id:
+            self.path.append((self.env.now, new_island.id))
         self.current_island = new_island
 
     def _move_to(self, new_island):
@@ -128,15 +147,14 @@ class Population(object):
         """
         if len(self.backtrack) == 0:
             self.backtrack.append(self.start_island)
-            logger.debug("POPULATION %s IS A FAILURE!!!!", self.id)
+            logger.info("POPULATION %s IS A FAILURE!!!!", self.id)
             return self.die()
-        else:
-            backtrack_island = self.islands[self.backtrack.pop(-1)]
-            logger.debug('%05d Population %s is stuck on %s. Moving back to previous island %s', self.env.now, self.id,
-                         self.current_island, backtrack_island)
-            e = self._move_to(backtrack_island)
-            e.callbacks.append(self._update_island_callback(backtrack_island))
-            return e
+        backtrack_island = self.islands[self.backtrack.pop(-1)]
+        logger.debug('%05d Population %s is stuck on %s. Moving back to previous island %s', self.env.now, self.id,
+                     self.current_island, backtrack_island)
+        e = self._move_to(backtrack_island)
+        e.callbacks.append(self._update_island_callback(backtrack_island))
+        return e
 
     def die(self):
         """
@@ -152,22 +170,24 @@ class Population(object):
         """
         mt = self.weighted_choice(self.current_island.can_see, self.visited, self.current_island.probs)
         if mt is None:
+            mt = self.weighted_choice(self.current_island.can_see, {self.start_island}, self.current_island.probs)
+            # return self.go_back()
+        if mt is None:
             return self.go_back()
+        move_to = self.islands[mt]
+        if move_to.r.capacity > move_to.r.count:
+            self.visited.add(move_to.id)
+            self.backtrack.append(self.current_island.id)
+            logger.info('%05d Population %s moved from %s to %s', self.env.now, self.id, self.current_island,
+                        move_to)
+            e = self._move_to(move_to)
+            e.callbacks.append(self._update_island_callback(move_to))
+            return e
         else:
-            move_to = self.islands[mt]
-            if move_to.r.capacity > move_to.r.count:
-                self.visited.add(move_to.id)
-                self.backtrack.append(self.current_island.id)
-                logger.debug('%05d Population %s moved from %s to %s', self.env.now, self.id, self.current_island,
-                             move_to)
-                e = self._move_to(move_to)
-                e.callbacks.append(self._update_island_callback(move_to))
-                return e
-            else:
-                logger.info(
-                    '%05d Population %s tried to move from %s to %s but were rebuffed by existing population',
-                    self.env.now, self.id, self.current_island, move_to)
-                return self.env.event().succeed()
+            logger.info(
+                '%05d Population %s tried to move from %s to %s but were rebuffed by existing population',
+                self.env.now, self.id, self.current_island, move_to)
+            return self.env.event().succeed()
 
     @property
     def consumption_amount(self):
@@ -219,18 +239,17 @@ class Population(object):
 
 class VaryingPopulation(Population):
     def __init__(self, env, pop_id, population_size, stats, islands, start_island, finish_island, ignore_islands,
-                 consumption_rate=1.0, move_propensity=1.0, die_after=100, tick_size=1, ignore_start_islands=None):
-        self.ignore_start_islands = ignore_start_islands if ignore_start_islands is not None else {start_island}
-        self.population_size = population_size
+                 consumption_rate=1.0, move_propensity=1.0, die_after=100, tick_size=1, ignore_start_islands=None,
+                 isolate=False):
         # self.demography = zeros((2, 100), dtype=uint32)
 
         self.child_populations = []
-        self.path = [(0, start_island)]
         self.stasis = False
         self.moving = False
         super(VaryingPopulation, self).__init__(env, pop_id, stats, islands, start_island,
                                                 finish_island, ignore_islands, consumption_rate, move_propensity,
-                                                die_after, tick_size)
+                                                die_after, tick_size, ignore_start_islands=ignore_start_islands,
+                                                population_size=population_size, isolate=isolate)
 
     def _update_island(self, new_island):
         """
@@ -289,25 +308,6 @@ class VaryingPopulation(Population):
 
     def go_back(self):
         return self.env.event().succeed()
-
-    def weighted_choice(self, islands, visited, probs=None):
-        """
-        :type islands: numpy.ndarray
-        :type probs: numpy.ndarray
-        :type visited: set[int]
-        :rtype: int
-        """
-        full = {x for x in islands if
-                x in self.islands and self.islands[x].r.capacity == self.islands[x].r.count} | visited
-        if self.current_island.id == START_ISLAND:
-            full |= self.ignore_start_islands
-        mask = in1d(islands, list(full), invert=True)
-        m = islands[mask]
-        p = probs[mask] / probs[mask].sum() if probs is not None else None
-        if len(m) > 0:
-            c = choice(m, size=1, p=p)
-            if len(c) > 0:
-                return c[0]
 
     @property
     def finished(self):

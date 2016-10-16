@@ -33,6 +33,7 @@ class Island(object):
         self.id = id
         self.area = area
         self.perimeter = perimeter
+        self._can_see = can_see
         self.can_see, self.probs = self.normalise(can_see)
         self.replenish_rate = replenish_rate
         self.r = Resource(self.env, capacity=r_cap)
