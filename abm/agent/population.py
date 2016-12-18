@@ -178,8 +178,8 @@ class Population(object):
         if move_to.r.capacity > move_to.r.count:
             self.visited.add(move_to.id)
             self.backtrack.append(self.current_island.id)
-            logger.info('%05d Population %s moved from %s to %s', self.env.now, self.id, self.current_island,
-                        move_to)
+            logger.debug('%05d Population %s moved from %s to %s', self.env.now, self.id, self.current_island,
+                         move_to)
             e = self._move_to(move_to)
             e.callbacks.append(self._update_island_callback(move_to))
             return e
