@@ -19,8 +19,9 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-NUM_SIMULATIONS = 1
-SIM_YEARS = 500
+NUM_SIMULATIONS = 500
+POP_DEMOG_SIM_YEARS = 500
+POP_OFT_SIM_YEARS = 2000
 MAX_FINISHERS = 100
 # CURRENT_RAINFALL = 2730
 # RAINFALL_MULTIPLIER = 0.66
@@ -40,29 +41,29 @@ def sqm_to_deg(sqm):
 ISLAND_SIZE_CUTOFF_DEG2 = sqm_to_deg(ISLAND_SIZE_CUTOFF_KM2)
 
 SCENARIOS = (
-    ('all_slow', NUM_SIMULATIONS, SIM_YEARS, VaryingPopulation, (
+    ('all_demog', NUM_SIMULATIONS, POP_DEMOG_SIM_YEARS, VaryingPopulation, (
         ('north', ENTRY_NORTH), ('south', ENTRY_SOUTH), ('taiwan', ENTRY_TAIWAN), ('palawan', ENTRY_PALAWAN))),
-    ('north_slow', NUM_SIMULATIONS, SIM_YEARS, VaryingPopulation, (('north', ENTRY_NORTH),)),
-    ('south_slow', NUM_SIMULATIONS, SIM_YEARS, VaryingPopulation, (('south', ENTRY_SOUTH),)),
-    ('taiwan_slow', NUM_SIMULATIONS, SIM_YEARS, VaryingPopulation, (('taiwan', ENTRY_TAIWAN),)),
-    ('palawan_slow', NUM_SIMULATIONS, SIM_YEARS, VaryingPopulation, (('palawan', ENTRY_PALAWAN),)),
-    ('taiwan_south_slow', NUM_SIMULATIONS, SIM_YEARS, VaryingPopulation,
+    ('north_demog', NUM_SIMULATIONS, POP_DEMOG_SIM_YEARS, VaryingPopulation, (('north', ENTRY_NORTH),)),
+    ('south_demog', NUM_SIMULATIONS, POP_DEMOG_SIM_YEARS, VaryingPopulation, (('south', ENTRY_SOUTH),)),
+    ('taiwan_demog', NUM_SIMULATIONS, POP_DEMOG_SIM_YEARS, VaryingPopulation, (('taiwan', ENTRY_TAIWAN),)),
+    ('palawan_demog', NUM_SIMULATIONS, POP_DEMOG_SIM_YEARS, VaryingPopulation, (('palawan', ENTRY_PALAWAN),)),
+    ('taiwan_south_demog', NUM_SIMULATIONS, POP_DEMOG_SIM_YEARS, VaryingPopulation,
      (('taiwan', ENTRY_TAIWAN), ('south', ENTRY_SOUTH))),
-    ('taiwan_north_slow', NUM_SIMULATIONS, SIM_YEARS, VaryingPopulation,
+    ('taiwan_north_demog', NUM_SIMULATIONS, POP_DEMOG_SIM_YEARS, VaryingPopulation,
      (('taiwan', ENTRY_TAIWAN), ('north', ENTRY_NORTH))),
-    ('taiwan_palawan_slow', NUM_SIMULATIONS, SIM_YEARS, VaryingPopulation,
+    ('taiwan_palawan_demog', NUM_SIMULATIONS, POP_DEMOG_SIM_YEARS, VaryingPopulation,
      (('taiwan', ENTRY_TAIWAN), ('palawan', ENTRY_PALAWAN))),
-    ('south_north_slow', NUM_SIMULATIONS, SIM_YEARS, VaryingPopulation,
+    ('south_north_demog', NUM_SIMULATIONS, POP_DEMOG_SIM_YEARS, VaryingPopulation,
      (('south', ENTRY_SOUTH), ('north', ENTRY_NORTH))),
-    ('south_palawan_slow', NUM_SIMULATIONS, SIM_YEARS, VaryingPopulation,
+    ('south_palawan_demog', NUM_SIMULATIONS, POP_DEMOG_SIM_YEARS, VaryingPopulation,
      (('south', ENTRY_SOUTH), ('palawan', ENTRY_PALAWAN))),
-    ('north_palawan_slow', NUM_SIMULATIONS, SIM_YEARS, VaryingPopulation,
+    ('north_palawan_demog', NUM_SIMULATIONS, POP_DEMOG_SIM_YEARS, VaryingPopulation,
      (('north', ENTRY_NORTH), ('palawan', ENTRY_PALAWAN))),
 
-    ('north_fast', NUM_SIMULATIONS, 2000, Population, (('north', ENTRY_NORTH),) * MAX_FINISHERS),
-    ('south_fast', NUM_SIMULATIONS, 2000, Population, (('south', ENTRY_SOUTH),) * MAX_FINISHERS),
-    ('taiwan_fast', NUM_SIMULATIONS, 2000, Population, (('taiwan', ENTRY_TAIWAN),) * MAX_FINISHERS),
-    ('palawan_fast', NUM_SIMULATIONS, 2000, Population, (('palawan', ENTRY_PALAWAN),) * MAX_FINISHERS),
+    ('north_oft', NUM_SIMULATIONS, POP_OFT_SIM_YEARS, Population, (('north', ENTRY_NORTH),) * MAX_FINISHERS),
+    ('south_oft', NUM_SIMULATIONS, POP_OFT_SIM_YEARS, Population, (('south', ENTRY_SOUTH),) * MAX_FINISHERS),
+    ('taiwan_oft', NUM_SIMULATIONS, POP_OFT_SIM_YEARS, Population, (('taiwan', ENTRY_TAIWAN),) * MAX_FINISHERS),
+    ('palawan_oft', NUM_SIMULATIONS, POP_OFT_SIM_YEARS, Population, (('palawan', ENTRY_PALAWAN),) * MAX_FINISHERS),
 )
 
 TOTAL = sum(x[1] * x[2] for x in SCENARIOS)
