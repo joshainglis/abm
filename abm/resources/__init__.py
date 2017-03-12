@@ -1,8 +1,7 @@
 import logging
 
 from numpy import array, int32
-from numpy.random import normal
-from simpy import Resource, Container
+from simpy import Container, Resource
 
 from abm.config import DEG_TO_KM, TICK_SIZE
 
